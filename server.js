@@ -4,6 +4,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const url = require('url');
+const crypto = require('crypto');
 
 const ROOT = __dirname;
 const PUBLIC = path.join(ROOT, 'public');
@@ -39,6 +40,10 @@ function saveRoom(room, obj) {
   fs.renameSync(tmp, f);
 }
 function uniq(a) { return [...new Set(a || [])]; }
+// 密码：仅存哈希，绝不存明文；空密码视为未上锁
+function hashPw(pw) { return pw ? crypto.createHash('sha256').update(String(pw)).digest('hex') : null; }
+function authOk(st, pwHeader) { if (!st || !st.pwHash) return true; return hashPw(pwHeader) === st.pwHash; }
+function send401(res) { res.writeHead(401, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'unauthorized', locked: true })); }
 // 合并两份账本：交易按 id 取较新(updatedAt 大)的；分类/固定项取并集；期初取较大值
 function mergeState(a, b) {
   a = a || {}; b = b || {};
@@ -55,7 +60,8 @@ function mergeState(a, b) {
     },
     fixedCats: uniq([...(a.fixedCats || []), ...(b.fixedCats || [])]),
     settings: ((b.version || 0) >= (a.version || 0)) ? (b.settings || a.settings) : (a.settings || b.settings),
-    version: ((a.version || 0) + (b.version || 0))
+    version: ((a.version || 0) + (b.version || 0)),
+    pwHash: b.pwHash || a.pwHash || null   // 密码哈希由服务端权威保存，合并时不可丢失
   };
 }
 
@@ -82,11 +88,14 @@ const server = http.createServer((req, res) => {
     if (req.method === 'GET') {
       let st = loadRoom(room);
       if (!st) { st = JSON.parse(JSON.stringify(SEED)); st.version = 1; saveRoom(room, st); }
+      if (!authOk(st, req.headers['x-pw'])) return send401(res);
       res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
       return res.end(JSON.stringify(st));
     }
     if (req.method === 'DELETE') {
       const f = roomFile(room);
+      const cur = loadRoom(room);
+      if (cur && !authOk(cur, req.headers['x-pw'])) return send401(res);
       if (f) { try { fs.unlinkSync(f); } catch (e) {} }
       res.writeHead(200, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ ok: true }));
@@ -99,10 +108,36 @@ const server = http.createServer((req, res) => {
         try { incoming = JSON.parse(body); } catch (e) { res.writeHead(400); return res.end('bad json'); }
         let cur = loadRoom(room);
         if (!cur) cur = JSON.parse(JSON.stringify(SEED));
+        if (!authOk(cur, req.headers['x-pw'])) return send401(res);
         const merged = mergeState(cur, incoming);
         saveRoom(room, merged);
         res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
         res.end(JSON.stringify(merged));
+      });
+      return;
+    }
+    res.writeHead(405); return res.end('method not allowed');
+  }
+  // API: 设置 / 修改 / 取消 账本密码
+  if (pathname === '/api/password') {
+    const room = u.query.room;
+    if (!room) { res.writeHead(400, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'room required' })); }
+    if (req.method === 'POST') {
+      let body = '';
+      req.on('data', c => { body += c; if (body.length > 1e5) req.destroy(); });
+      req.on('end', () => {
+        let inc;
+        try { inc = JSON.parse(body); } catch (e) { res.writeHead(400); return res.end('bad json'); }
+        let cur = loadRoom(room);
+        if (!cur) cur = JSON.parse(JSON.stringify(SEED));
+        if (cur.pwHash && hashPw(inc.oldPassword) !== cur.pwHash) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: 'old password wrong' }));
+        }
+        cur.pwHash = (inc.newPassword && String(inc.newPassword).length > 0) ? hashPw(inc.newPassword) : null;
+        saveRoom(room, cur);
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        return res.end(JSON.stringify({ ok: true, locked: !!cur.pwHash }));
       });
       return;
     }

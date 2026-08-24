@@ -5,7 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#5b7cff">
 <link rel="manifest" href="manifest.webmanifest">
-<link rel="apple-touch-icon" href="icon.svg">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
 <title>记账高手 · 家庭共享账本</title>
 <style>
 :root{
@@ -113,6 +114,25 @@ h1,h2,h3{margin:0}
 .section-t{font-weight:800;font-size:15px;margin:4px 2px 10px;display:flex;justify-content:space-between;align-items:center}
 small.k{color:var(--sub);font-weight:500;font-size:12px}
 .roomline{font-size:12px;color:var(--sub);margin-top:8px}
+.installbar{position:fixed;left:50%;transform:translateX(-50%);bottom:84px;max-width:520px;width:calc(100% - 28px);
+  background:linear-gradient(135deg,var(--brand),var(--brand-d));color:#fff;border-radius:14px;padding:12px 14px;
+  box-shadow:0 8px 28px rgba(63,95,224,.35);z-index:40;display:flex;align-items:center;gap:10px}
+.installbar.hide{display:none}
+.installbar .ib-ic{font-size:26px}
+.installbar .ib-txt{flex:1;font-size:13px;line-height:1.35}
+.installbar .ib-txt b{font-size:14px}
+.installbar .ib-btn{border:none;background:#fff;color:var(--brand-d);font-weight:700;border-radius:9px;padding:8px 12px;font-size:13px;cursor:pointer;white-space:nowrap}
+.installbar .ib-x{border:none;background:transparent;color:rgba(255,255,255,.85);font-size:20px;cursor:pointer;padding:2px 4px}
+.install-help{display:none;background:var(--card);border-radius:14px;padding:14px 16px;margin-bottom:14px;border:1px solid var(--line)}
+.install-help.show{display:block}
+.install-help h3{font-size:15px;margin-bottom:8px}
+.install-help ol{margin:6px 0 0;padding-left:20px;font-size:13px;color:var(--text);line-height:1.7}
+.install-help .ios{margin-top:10px;background:var(--bg);border-radius:10px;padding:10px 12px;font-size:12.5px;color:var(--sub);line-height:1.6}
+.modal{position:fixed;inset:0;background:rgba(15,18,26,.55);display:none;align-items:center;justify-content:center;z-index:80;padding:20px}
+.modal-box{background:var(--card);border-radius:18px;padding:22px 20px;max-width:340px;width:100%;box-shadow:var(--shadow)}
+.modal-box h3{font-size:18px;margin:0 0 6px}
+.modal-box input{width:100%;border:1px solid var(--line);background:var(--bg);color:var(--text);border-radius:10px;padding:11px;font-size:15px;margin:10px 0;outline:none;font-family:inherit}
+.modal-box .btn{margin-top:6px}
 </style>
 </head>
 <body>
@@ -203,6 +223,15 @@ small.k{color:var(--sub);font-weight:500;font-size:12px}
       <button class="btn primary" id="inviteBtn" style="margin-top:10px">复制邀请链接（发给老公/老婆）</button>
     </div>
     <div class="card">
+      <div class="section-t">🔒 账本密码（锁住这本共享账）</div>
+      <div class="roomline" id="pwStatus"></div>
+      <div class="setrow" id="pwOldWrap" style="display:none"><span>原密码</span><input id="pwOld" type="password" placeholder="输入原密码"></div>
+      <div class="setrow"><span id="pwNewLab">设置新密码</span><input id="pwNew" type="password" placeholder="6 位以上"></div>
+      <div class="setrow"><span>确认新密码</span><input id="pwNew2" type="password" placeholder="再输一次"></div>
+      <button class="btn primary" id="pwSave" style="margin-top:6px">保存密码</button>
+      <button class="btn ghost" id="pwRemove" style="margin-top:8px;display:none">取消密码（解除锁定）</button>
+    </div>
+    <div class="card">
       <div class="section-t">分类管理 · 支出</div>
       <div class="catman" id="catExp"></div>
       <div class="catadd"><input id="newExp" placeholder="新增支出分类"><button class="btn primary" style="width:auto;padding:9px 16px" data-add="expense">＋</button></div>
@@ -243,6 +272,9 @@ if(!new URLSearchParams(location.search).get('room')){ const u=new URL(location.
 const LS_KEY='jizhang.data.v2', LS_SET='jizhang.settings.v2';
 let state=null, settings=null, qa={type:'expense',payer:'老婆',cat:null};
 let lastSync=0, online=true, syncing=false;
+let roomPw = (()=>{ try{ return localStorage.getItem('jz_pw_'+ROOM)||''; }catch(e){ return ''; } })();
+let roomLocked=false;
+function savePw(p){ roomPw=p||''; try{ if(roomPw) localStorage.setItem('jz_pw_'+ROOM, roomPw); else localStorage.removeItem('jz_pw_'+ROOM); }catch(e){} }
 
 /* ============ 默认状态 ============ */
 function defaultState(){ return {
@@ -279,9 +311,9 @@ function saveLocal(){ try{ localStorage.setItem(LS_KEY, JSON.stringify(state)); 
 function loadSet(){ try{ const s=localStorage.getItem(LS_SET); if(s) return JSON.parse(s);}catch(e){} return defaultSettings(); }
 function saveSet(){ try{ localStorage.setItem(LS_SET, JSON.stringify(settings)); }catch(e){} }
 
-async function apiGet(){ const r=await fetch(API+'/api/ledger?room='+encodeURIComponent(ROOM)); if(!r.ok) throw 0; return r.json(); }
-async function apiPost(){ const r=await fetch(API+'/api/ledger?room='+encodeURIComponent(ROOM),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload())}); if(!r.ok) throw 0; return r.json(); }
-async function apiDelete(){ const r=await fetch(API+'/api/ledger?room='+encodeURIComponent(ROOM),{method:'DELETE'}); if(!r.ok) throw 0; return true; }
+async function apiGet(){ const r=await fetch(API+'/api/ledger?room='+encodeURIComponent(ROOM),{headers:{'x-pw':roomPw||''}}); if(r.status===401) throw {code:401}; if(!r.ok) throw 0; return r.json(); }
+async function apiPost(){ const r=await fetch(API+'/api/ledger?room='+encodeURIComponent(ROOM),{method:'POST',headers:{'Content-Type':'application/json','x-pw':roomPw||''},body:JSON.stringify(payload())}); if(r.status===401) throw {code:401}; if(!r.ok) throw 0; return r.json(); }
+async function apiDelete(){ const r=await fetch(API+'/api/ledger?room='+encodeURIComponent(ROOM),{method:'DELETE',headers:{'x-pw':roomPw||''}}); if(r.status===401) throw {code:401}; if(!r.ok) throw 0; return true; }
 
 async function push(){
   if(syncing) return; syncing=true;
@@ -429,6 +461,7 @@ function renderSettings(){
   document.getElementById('defPayer').value=settings.defaultPayer;
   document.getElementById('themeToggle').checked=settings.theme==='dark';
   document.getElementById('roomLine').textContent='当前家庭房间：'+ROOM+'（同一链接即同一账本）';
+  renderPwStatus();
   renderCatMan('catExp','expense'); renderCatMan('catInc','income');
 }
 function renderCatMan(elId,type){
@@ -437,6 +470,63 @@ function renderCatMan(elId,type){
     el.innerHTML=`${esc(c)} <b data-delcat="${type}|${esc(c)}">×</b>`;
     el.querySelector('b').onclick=()=>{ if(state.categories[type].length<=1){ toast('至少保留一个'); return; } state.categories[type]=state.categories[type].filter(x=>x!==c); saveLocal(); renderCatMan(elId,type); renderQuick(); push(); };
     box.appendChild(el); });
+}
+function renderPwStatus(){
+  const st=document.getElementById('pwStatus');
+  if(roomLocked){
+    st.textContent='🔒 已加密：只有输入正确密码才能打开这本账。';
+    document.getElementById('pwOldWrap').style.display='flex';
+    document.getElementById('pwNewLab').textContent='修改密码（先填原密码）';
+    document.getElementById('pwRemove').style.display='block';
+  } else {
+    st.textContent='🔓 未加密：任何人拿到链接都能查看，建议设置密码。';
+    document.getElementById('pwOldWrap').style.display='none';
+    document.getElementById('pwNewLab').textContent='设置新密码';
+    document.getElementById('pwRemove').style.display='none';
+  }
+}
+async function setPassword(){
+  const np=document.getElementById('pwNew').value, np2=document.getElementById('pwNew2').value, op=document.getElementById('pwOld').value;
+  if(np.length<6){ toast('密码至少 6 位'); return; }
+  if(np!==np2){ toast('两次输入不一致'); return; }
+  if(roomLocked && !op){ toast('请输入原密码'); return; }
+  try{
+    const r=await fetch(API+'/api/password?room='+encodeURIComponent(ROOM),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({oldPassword:op,newPassword:np})});
+    if(r.status===403){ toast('原密码错误'); return; }
+    if(!r.ok){ toast('设置失败，请重试'); return; }
+    savePw(np); roomLocked=true; renderPwStatus(); toast('密码已保存');
+    try{ const remote=await apiGet(); state=mergeState(state,remote); saveLocal(); renderAll(); }catch(e){}
+  }catch(e){ toast('网络错误，请重试'); }
+}
+async function removePassword(){
+  const op=document.getElementById('pwOld').value;
+  if(!op){ toast('请输入原密码以解除锁定'); return; }
+  try{
+    const r=await fetch(API+'/api/password?room='+encodeURIComponent(ROOM),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({oldPassword:op,newPassword:''})});
+    if(r.status===403){ toast('原密码错误'); return; }
+    if(!r.ok){ toast('操作失败，请重试'); return; }
+    savePw(''); roomLocked=false; renderPwStatus();
+    document.getElementById('pwOld').value=''; document.getElementById('pwNew').value=''; document.getElementById('pwNew2').value='';
+    toast('已取消密码');
+  }catch(e){ toast('网络错误，请重试'); }
+}
+function showPwModal(){
+  const m=document.getElementById('pwModal'); if(!m) return;
+  m.style.display='flex';
+  const i=document.getElementById('pwInput');
+  if(i){ i.value=''; document.getElementById('pwErr').textContent=''; setTimeout(()=>i.focus(),50); }
+}
+function hidePwModal(){ const m=document.getElementById('pwModal'); if(m) m.style.display='none'; }
+async function tryUnlock(pw){
+  try{
+    const r=await fetch(API+'/api/ledger?room='+encodeURIComponent(ROOM),{headers:{'x-pw':pw||''}});
+    if(r.status===401) return false;
+    if(!r.ok) return false;
+    const remote=await r.json();
+    savePw(pw); roomLocked=true; online=true; lastSync=Date.now();
+    state=mergeState(state,remote); saveLocal(); updateStatus(); renderAll(); hidePwModal();
+    return true;
+  }catch(e){ return false; }
 }
 
 /* ============ 导入导出 ============ */
@@ -468,6 +558,11 @@ function bind(){
   document.getElementById('expCsv').onclick=exportCsv;
   document.getElementById('inviteBtn').onclick=()=>{ const url=location.href; if(navigator.clipboard&&navigator.clipboard.writeText){ navigator.clipboard.writeText(url).then(()=>toast('邀请链接已复制，发给家人即可')).catch(()=>prompt('复制此链接发给家人：',url)); } else { prompt('复制此链接发给家人：',url); } };
   document.getElementById('clearBtn').onclick=()=>{ if(confirm('确定清空全家账本？此操作会删除云端和本机所有记录，不可恢复！')){ apiDelete().then(()=>{ state=defaultState(); saveLocal(); renderAll(); toast('已清空'); }).catch(()=>{ toast('清空失败，请重试'); }); } };
+  // 账本密码
+  document.getElementById('pwSave').onclick=setPassword;
+  document.getElementById('pwRemove').onclick=removePassword;
+  document.getElementById('pwSubmit').onclick=async ()=>{ const v=document.getElementById('pwInput').value; if(!v){ document.getElementById('pwErr').textContent='请输入密码'; return; } const ok=await tryUnlock(v); if(!ok) document.getElementById('pwErr').textContent='密码错误，请重试'; };
+  document.getElementById('pwInput').addEventListener('keydown',e=>{ if(e.key==='Enter') document.getElementById('pwSubmit').click(); });
   const mic=document.getElementById('micBtn');
   if('webkitSpeechRecognition' in window || 'SpeechRecognition' in window){ mic.style.display='block'; const SR=window.SpeechRecognition||window.webkitSpeechRecognition; const rec=new SR(); rec.lang='zh-CN'; rec.interimResults=false;
     mic.onclick=()=>{ rec.start(); toast('请说出金额…'); }; rec.onresult=e=>{ const txt=e.results[0][0].transcript; const m=txt.match(/\d+(\.\d+)?/); if(m){ document.getElementById('amt').value=m[0]; toast('识别：'+m[0]); } else toast('没听清数字'); }; }
@@ -487,7 +582,8 @@ async function init(){
   state=loadLocal()||defaultState();
   applyTheme(); qa.payer=settings.defaultPayer||'老婆';
   renderAll(); bind(); switchTab('record'); updateStatus();
-  try{ const remote=await apiGet(); state=mergeState(state,remote); saveLocal(); online=true; }catch(e){ online=false; }
+  try{ const remote=await apiGet(); state=mergeState(state,remote); saveLocal(); online=true; }
+  catch(e){ if(e&&e.code===401){ roomLocked=true; online=false; updateStatus(); showPwModal(); return; } online=false; }
   lastSync=Date.now(); updateStatus(); renderAll();
   setInterval(pull, 20000);
   window.addEventListener('online', ()=>pull());
@@ -496,6 +592,59 @@ init();
 
 /* ============ PWA ============ */
 if('serviceWorker' in navigator){ window.addEventListener('load',()=>{ navigator.serviceWorker.register('sw.js').catch(()=>{}); }); }
+
+/* ============ 安装到手机 ============ */
+let deferredPrompt = null;
+const installBar = document.getElementById('installBar');
+const installHelp = document.getElementById('installHelp');
+window.addEventListener('beforeinstallprompt', (e)=>{
+  e.preventDefault();
+  deferredPrompt = e;
+  if(localStorage.getItem('jz_install_dismiss')!=='1') installBar.classList.remove('hide');
+});
+window.addEventListener('appinstalled', ()=>{ installBar.classList.add('hide'); });
+function installNow(){
+  if(deferredPrompt){ deferredPrompt.prompt(); deferredPrompt.userChoice.then(()=>{ deferredPrompt=null; installBar.classList.add('hide'); }); }
+  else { installHelp.classList.add('show'); installHelp.scrollIntoView({behavior:'smooth',block:'center'}); }
+}
+function dismissInstall(){ installBar.classList.add('hide'); localStorage.setItem('jz_install_dismiss','1'); }
 </script>
+<div class="installbar" id="installBar">
+  <div class="ib-ic">📲</div>
+  <div class="ib-txt"><b>装到手机主屏 = 独立APP</b><br>点「立即安装」或浏览器菜单「添加到主屏幕」</div>
+  <button class="ib-btn" onclick="installNow()">立即安装</button>
+  <button class="ib-x" onclick="dismissInstall()">×</button>
+</div>
+<div class="wrap" style="padding-top:14px">
+  <div class="install-help" id="installHelp">
+    <h3>📱 把记账高手装成手机APP（3 步）</h3>
+    <p class="muted" style="margin:0">装到主屏后，它就和微信一样是桌面的一个图标，点开全屏、无浏览器地址栏，夫妻两人共用同一本账。</p>
+    <div class="ios">
+      <b>安卓（Chrome / 微信内置浏览器）：</b><br>
+      ① 用浏览器打开本链接 → 点右上角 ⋮ 菜单<br>
+      ② 选「<b>安装应用</b>」或「<b>添加到主屏幕</b>」<br>
+      ③ 桌面上出现「记账高手」图标，点开即用
+    </div>
+    <div class="ios">
+      <b>苹果 iPhone（Safari）：</b><br>
+      ① 用 <b>Safari</b> 打开本链接（微信里打开请先点「…」→「在浏览器打开」）<br>
+      ② 点底部中间的 <b>分享 ⬆️</b> 按钮<br>
+      ③ 向上滑，选「<b>添加到主屏幕</b>」→ 点「添加」<br>
+      ④ 桌面上出现「记账高手」图标，点开即用
+    </div>
+    <div class="ios">
+      <b>老婆怎么进同一本账：</b>在你这里点「设置 → 复制邀请链接」，把带 <b>?room=</b> 的链接发给她，她同样装到主屏，两人即可实时同步。
+    </div>
+  </div>
+</div>
+<div class="modal" id="pwModal">
+  <div class="modal-box">
+    <h3>🔒 这本账本已加密</h3>
+    <p class="muted" style="margin:0;font-size:13px">输入密码才能查看。密码由创建账本的家人设置并共享给另一半。</p>
+    <input id="pwInput" type="password" placeholder="请输入账本密码" autocomplete="off">
+    <div id="pwErr" style="color:var(--out);font-size:13px;min-height:18px;text-align:center"></div>
+    <button class="btn primary" id="pwSubmit">进入账本</button>
+  </div>
+</div>
 </body>
 </html>
