@@ -1,0 +1,15 @@
+# Render 一键部署配置（免费套餐）
+# 在 render.com 新建 Blueprint / Web Service 时指向本仓库即可自动识别
+services:
+  - type: web
+    name: jizhang-gongxiang
+    runtime: node
+    plan: free
+    region: oregon        # 免费套餐可选区域
+    branch: main
+    buildCommand: "echo skip-build"
+    startCommand: "node server.js"
+    healthCheckPath: "/"
+    envVars:
+      - key: PORT
+        value: "3000"

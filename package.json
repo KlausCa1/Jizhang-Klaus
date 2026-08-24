@@ -1,0 +1,14 @@
+{
+  "name": "jizhang-gongxiang",
+  "version": "1.0.0",
+  "description": "家庭共享记账 —— 实时同步后端 + PWA 前端（零依赖）",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT"
+}
